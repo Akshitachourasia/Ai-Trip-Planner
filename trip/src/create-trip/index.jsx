@@ -1,41 +1,35 @@
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AI_PROMPT, SelectBudgetOptions, SelectTravelsList } from '@/constants/options';
 import { chatSession } from '@/services/AIModal';
-import React, { useEffect, useState } from 'react';
-import { FcGoogle } from "react-icons/fc";
-import GooglePlacesAutocomplete from 'react-google-places-autocomplete';
-import { AiOutlineLoading3Quarters } from "react-icons/ai";
 import {
     Dialog,
     DialogContent,
     DialogDescription,
     DialogHeader,
 } from "@/components/ui/dialog"
-
 import { toast } from 'sonner';
 import { useGoogleLogin } from '@react-oauth/google';
-import axios from 'axios';
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '@/services/firebaseConfig';
 import { useNavigate } from 'react-router-dom';
-
-const locations = [
-    { value: 'amsterdam', label: 'Amsterdam' },
-    { value: 'kerela', label: 'Kerela' },
-
-    { value: 'mussoorie', label: 'Mussoorie' },
-    { value: 'singapore', label: 'Singapore' },
-];
+import { AiOutlineLoading3Quarters } from "react-icons/ai";
+import { FcGoogle } from "react-icons/fc";
 
 const CreateTrip = () => {
     const [openDialog, setOpenDialog] = useState(false);
-    const [formData, setFormData] = useState([]);
+    const [formData, setFormData] = useState({});
     const [selectedlocation, setSelectedlocation] = useState('');
     const [loading, setLoading] = useState(false);
+    const [locationSuggestions, setLocationSuggestions] = useState([]);
+    const [searchTerm, setSearchTerm] = useState('');
+
     const navigate = useNavigate();
-    const handleInputChange = (name, label) => {
-        setFormData({ ...formData, [name]: label });
+
+    const handleInputChange = (name, value) => {
+        setFormData({ ...formData, [name]: value });
     };
 
     useEffect(() => {
@@ -45,8 +39,7 @@ const CreateTrip = () => {
     const login = useGoogleLogin({
         onSuccess: (tokenResponse) => GetUserProfile(tokenResponse),
         onError: (error) => console.log(error)
-
-    })
+    });
 
     const onGenerateTrip = async () => {
         const user = localStorage.getItem("user");
@@ -59,6 +52,7 @@ const CreateTrip = () => {
             toast("Please fill all the fields", { type: "warning" });
             return;
         }
+
         setLoading(true);
         const FINAL_PROMPT = AI_PROMPT.replace("{location}", formData.location).replace("{budget}", formData.budget).replace("{travel}", formData.travel).replace("{days}", formData.days);
         const result = await chatSession.sendMessage(FINAL_PROMPT);
@@ -75,7 +69,6 @@ const CreateTrip = () => {
             userSelection: formData,
             tripData: JSON.parse(TripData),
             userEmail: user?.email,
-
             id: docId
         });
         setLoading(false);
@@ -96,8 +89,35 @@ const CreateTrip = () => {
         })
     }
 
-    return (
+    const fetchLocationSuggestions = async (query) => {
+        if (!query) return;
+        try {
+            const response = await axios.get('https://nominatim.openstreetmap.org/search', {
+                params: {
+                    q: query,
+                    format: 'json',
+                    addressdetails: 1,
+                    limit: 5
+                }
+            });
+            setLocationSuggestions(response.data.map(location => ({
+                label: location.display_name,
+                value: location.display_name
+            })));
+        } catch (error) {
+            console.error("Error fetching location suggestions", error);
+        }
+    };
 
+    useEffect(() => {
+        const delayDebounceFn = setTimeout(() => {
+            fetchLocationSuggestions(searchTerm);
+        }, 300);
+
+        return () => clearTimeout(delayDebounceFn);
+    }, [searchTerm]);
+
+    return (
         <div className="sm:px-10 md:px-32 lg:px-56 xl:px-10 px-5 mt-10">
             <h2 className='font-bold text-3xl'>Tell us your travel preferences</h2>
             <p className='mt-3 text-gray-500 text-xl'>
@@ -108,22 +128,29 @@ const CreateTrip = () => {
                     <h2 className='font-medium my-3 text-xl'>
                         What is the location of your choice?
                     </h2>
-                    <select
-                        value={selectedlocation}
-                        onChange={(e) => {
-                            setSelectedlocation(e.target.value);
-                            handleInputChange('location', e.target.value);
-                        }}
-                        className="w-full p-2 border rounded-lg"
-                    >
-                        <option value="" disabled>Select a location</option>
-                        {locations.map((location) => (
-                            <option key={location.label} value={location.label}>
-                                {location.label}
-                            </option>
-                        ))}
-                    </select>
-
+                    <Input
+                        type="text"
+                        placeholder="Search..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                    {locationSuggestions.length > 0 && (
+                        <ul className="border rounded-lg mt-2">
+                            {locationSuggestions.map((location) => (
+                                <li
+                                    key={location.value}
+                                    onClick={() => {
+                                        setSearchTerm(location.label); 
+                                        handleInputChange('location', location.label); 
+                                        setLocationSuggestions([]); 
+                                    }}
+                                    className="p-2 cursor-pointer hover:bg-gray-200"
+                                >
+                                    {location.label}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
                 </div>
                 <div>
                     <h2 className='font-medium my-3 text-xl'>
@@ -142,8 +169,9 @@ const CreateTrip = () => {
                         <div key={index}
                             onClick={() => handleInputChange('budget', item.title)}
                             className={`p-4 border cursor-pointer rounded-lg hover:shadow-sm
-                        ${formData?.budget == item.title && 'shadow-lg border-black'}
-                        `}>
+              ${formData?.budget == item.title && 'shadow-lg border-black'}
+              `}
+                        >
                             <h2 className='text-4xl'>{item.icon}</h2>
                             <h2 className='font-bold text-lg'>{item.title}</h2>
                             <h2 className='text-sm text-gray-500'>{item.desc}</h2>
@@ -158,8 +186,9 @@ const CreateTrip = () => {
                         <div key={index}
                             onClick={() => handleInputChange('travel', item.people)}
                             className={`p-4 border cursor-pointer rounded-lg hover:shadow-sm
-                        ${formData?.travel == item.people && 'shadow-lg border-black'}
-                        `}>
+              ${formData?.travel == item.people && 'shadow-lg border-black'}
+              `}
+                        >
                             <h2 className='text-4xl'>{item.icon}</h2>
                             <h2 className='font-bold text-lg'>{item.title}</h2>
                             <h2 className='text-sm text-gray-500'>{item.desc}</h2>
@@ -167,7 +196,6 @@ const CreateTrip = () => {
                     ))}
                 </div>
             </div>
-
             <div className='flex justify-end mt-10'>
                 <Button
                     disabled={loading}
@@ -175,7 +203,6 @@ const CreateTrip = () => {
                     {loading ?
                         <AiOutlineLoading3Quarters className='w-7 h-7 animate-spin' /> : 'Generate Trip'
                     }
-
                 </Button>
             </div>
             <Dialog open={openDialog}>
@@ -195,10 +222,7 @@ const CreateTrip = () => {
                     </DialogHeader>
                 </DialogContent>
             </Dialog>
-
         </div>
     );
-};
-
-
-export default CreateTrip;
+}
+export default CreateTrip
